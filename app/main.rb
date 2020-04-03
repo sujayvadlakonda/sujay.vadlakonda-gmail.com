@@ -9,34 +9,39 @@
 class DungeonGenerator
   attr_gtk
 
-  def tick
-    defaults
+  def initialize(grid_max_x: 27, grid_max_y: 27, grid_cell_size: 20, seed: Kernel.rand)
+    self.args = $gtk.args
+
+    state.grid_size_x = grid_max_x
+    state.grid_size_y = grid_max_y
+    state.cell_size = grid_cell_size
+    state.game_state = :room
+
+    room.attempted = 0
+    room.attempts = 250
+    room.rng = lambda { Kernel.rand(6) + 3}
+    room.rects = []
+    
+    maze.points = []
+    maze.flood_fill_stack = []
+
+    connect.connectors = []
+    connect.first_room = nil
+    connect.flood_fill = []
+    connect.main_region = []
+
+    remove.dead_ends = []
+  end
+
+  def tick(args)
+    self.args = args
+
     render
     if state.tick_count % 2 == 0 # Allows previous Thread to animate
       calc
     end
   end
   
-  def defaults
-    state.grid_size = 27 # Should always be an odd number
-    state.cell_size = 20
-    state.game_state ||= :room
-
-    room.attempted ||= 0
-    room.attempts = 200
-    room.rects ||= []
-    
-    maze.points ||= []
-    maze.flood_fill_stack ||= []
-
-    connect.connectors ||= []
-    connect.first_room ||= nil
-    connect.flood_fill ||= []
-    connect.main_region ||= []
-
-    remove.dead_ends ||= []
-  end
-
   def render
     render_dungeon_background
     render_room
@@ -47,7 +52,7 @@ class DungeonGenerator
   end
 
   def render_dungeon_background 
-    background = [0, 0, grid_size, grid_size, dungeon_background_color]
+    background = [0, 0, grid_size_x, grid_size_y, dungeon_background_color]
     outputs.solids << scale_rect(background)
   end
 
@@ -77,18 +82,20 @@ class DungeonGenerator
   end
 
   def render_grid_lines 
-    for i in 0..state.grid_size
-      outputs.lines << vertical_line(i)
-      outputs.lines << horizontal_line(i)
+    for x in 0..grid_size_x
+      outputs.lines << vertical_line(x)
+    end
+    for y in 0..grid_size_y
+      outputs.lines << horizontal_line(y)
     end
   end
 
   def vertical_line column
-    [column * cell_size, 0, column * cell_size, state.grid_size * cell_size]
+    [column * cell_size, 0, column * cell_size, grid_size_y * cell_size]
   end
 
   def horizontal_line row
-    [0, row * cell_size, state.grid_size * cell_size, row * cell_size]
+    [0, row * cell_size, grid_size_x * cell_size, row * cell_size]
   end
 
 
@@ -104,13 +111,13 @@ class DungeonGenerator
   # Else attempts another one
   def calc_room
     return unless state.game_state == :room
-    return state.game_state = :maze if state.room.attempted >= state.room.attempts
-    state.room.attempted += 1
+    return state.game_state = :maze if room.attempted >= room.attempts
+    room.attempted += 1
 
-    room = random_room
+    new_room = random_room
 
-    if valid_room?(room) 
-      state.room.rects << room
+    if valid_room?(new_room) 
+      room.rects << new_room
     else
       calc_room # Attempt to generate another room
     end
@@ -121,16 +128,13 @@ class DungeonGenerator
   end
 
   def random_room
-    room = random_square
-    room = rectangularize(room)
-    room << room_color
-    room
+    [ *rectangularize(random_square), *room_color ]
   end
 
   def random_square
-    x = rand(state.grid_size)
-    y = rand(state.grid_size)
-    size = rand(6) + 3 # Min size: 3, Max size: 8
+    x = rand(grid_size_x)
+    y = rand(grid_size_y)
+    size = room.rng.call
     [x, y, size, size]
   end
 
@@ -158,7 +162,7 @@ class DungeonGenerator
 
   def rect_within_bounds? rect
     x, y, width, height = *rect
-    (x + width < grid_size) && (y + height < grid_size)
+    (x + width < grid_size_x) && (y + height < grid_size_y)
   end
   
   def point_intersect_room? x, y
@@ -190,8 +194,8 @@ class DungeonGenerator
 
     # Checks every point starting from top left corner
     # Tries to start a new maze path
-    for x in 0..(state.grid_size - 1)
-      for y in (state.grid_size - 1).downto(0)
+    for x in 0..(grid_size_x - 1)
+      for y in (grid_size_y - 1).downto(0)
         if maze_starting_point?(x, y)
           return add_maze(x, y)
         end
@@ -290,8 +294,8 @@ class DungeonGenerator
   end
 
   def calc_connectors
-    for x in 0..(state.grid_size - 1)
-      for y in (state.grid_size - 1).downto(0)
+    for x in 0..(grid_size_x - 1)
+      for y in (grid_size_y - 1).downto(0)
         connect.connectors << [x, y] if connector?(x, y)
       end
     end
@@ -439,13 +443,13 @@ class DungeonGenerator
     unless x == 0
       directions << :left
     end
-    unless x == state.grid_size - 1
+    unless x == grid_size_x - 1
       directions << :right
     end
     unless y == 0
       directions << :down
     end
-    unless y == state.grid_size - 1
+    unless y == grid_size_y - 1
       directions << :up
     end
     directions
@@ -475,33 +479,25 @@ class DungeonGenerator
     unless x == 0
       points << [x - 1, y]
     end
-    unless x == grid_size - 1
+    unless x == grid_size_x - 1
       points << [x + 1, y]
     end
     unless y == 0
       points << [x, y - 1]
     end
-    unless y == grid_size - 1
+    unless y == grid_size_y - 1
       points << [x, y + 1]
     end
     points
   end
   
   def diagonal_points x, y
-    points = []
-    unless x == 0 or y == 0
-      points << [x - 1, y - 1]
-    end
-    unless x == grid_size - 1 or y == 0
-      points << [x + 1, y - 1]
-    end
-    unless x == grid_size - 1 or y == grid_size - 1
-      points << [x + 1, y + 1]
-    end
-    unless x == 0 or y == grid_size - 1
-      points << [x - 1, y + 1]
-    end
-    points
+    [
+      [x - 1, y - 1],
+      [x + 1, y - 1],
+      [x + 1, y + 1],
+      [x - 1, y + 1],
+    ].reject { |x, y| x < 1 || y < 1 || x > grid_size_x || y > grid_size_y }
   end
   
 
@@ -581,15 +577,22 @@ class DungeonGenerator
     state.remove
   end
   
-  def grid_size
-    state.grid_size
+  def grid_size_x
+    state.grid_size_x
   end
+
+  def grid_size_y
+    state.grid_size_y
+  end
+
 
   def cell_size
     state.cell_size
   end
 end
 
+
+$game = DungeonGenerator.new
 
 def tick args
   if args.inputs.keyboard.key_down.r
@@ -598,11 +601,9 @@ def tick args
     return
   end
 
-  $dungeon_generator ||= DungeonGenerator.new
-  $dungeon_generator.args = args
-  $dungeon_generator.tick
+  $game.tick(args)
 end
 
 def reset 
-  $dungeon_generator = nil
+  $game = DungeonGenerator.new
 end
